@@ -1,0 +1,129 @@
+name: Mirror OBS images to Docker Hub
+
+on:
+  schedule:
+    # Täglich um 05:15 UTC - kurz nach dem üblichen Nightly-Build-Zeitfenster
+    - cron: '15 5 * * *'
+  workflow_dispatch:
+    inputs:
+      extra_tag:
+        description: 'Zusätzlicher einzelner Tag, der (zusätzlich zur Standardliste) gemirrort werden soll'
+        required: false
+        type: string
+
+env:
+  SRC_REPO: ghcr.io/abeggled/openbridgeserver
+  DST_REPO: docker.io/starwarsfan/openbridgeserver
+  NIGHTLY_RETENTION: 5   # Anzahl der neusten datierten Nightlies, die gemirrort werden
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install skopeo
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+
+      - name: Login to GHCR
+        run: |
+          skopeo login ghcr.io \
+            -u "${{ github.actor }}" \
+            -p "${{ secrets.GHCR_READ_TOKEN }}"
+
+      - name: Login to Docker Hub
+        run: |
+          skopeo login docker.io \
+            -u "${{ secrets.DOCKERHUB_USERNAME }}" \
+            -p "${{ secrets.DOCKERHUB_TOKEN }}"
+
+      - name: Determine tags to mirror
+        id: tags
+        run: |
+          set -euo pipefail
+
+          all_tags=$(skopeo list-tags "docker://${SRC_REPO}" | jq -r '.Tags[]')
+
+          # Release-Tags: reine SemVer-artige Versionen, z.B. 2026.6.1 oder 2026.6
+          release_tags=$(echo "$all_tags" | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || true)
+
+          # RC-Tags
+          rc_tags=$(echo "$all_tags" | grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)?-RC[0-9]+$' || true)
+
+          # Datierte Nightlies (ohne Hash-Suffix), neuste zuerst, auf Retention begrenzt
+          nightly_tags=$(echo "$all_tags" \
+            | grep -E '^nightly-[0-9]{8}$' \
+            | sort -r \
+            | head -n "${NIGHTLY_RETENTION}")
+
+          {
+            echo "latest"
+            echo "nightly"
+            echo "$release_tags"
+            echo "$rc_tags"
+            echo "$nightly_tags"
+            if [ -n "${{ inputs.extra_tag }}" ]; then
+              echo "${{ inputs.extra_tag }}"
+            fi
+          } | grep -v '^$' | sort -u > tags.txt
+
+          echo "Zu mirrorende Tags:"
+          cat tags.txt
+
+      - name: Mirror tags
+        run: |
+          set -uo pipefail
+          failed=0
+          while read -r tag; do
+            echo "==> ${tag}"
+            if ! skopeo copy --all \
+                "docker://${SRC_REPO}:${tag}" \
+                "docker://${DST_REPO}:${tag}"; then
+              echo "    FAILED: ${tag}"
+              failed=1
+            fi
+          done < tags.txt
+          exit "${failed}"
+
+      - name: Cleanup expired nightly tags on Docker Hub
+        run: |
+          set -euo pipefail
+
+          DST_NAMESPACE="${DST_REPO#docker.io/}"   # z.B. starwarsfan/openbridgeserver
+
+          # Docker Hub JWT holen (separat vom Registry-Login, wird für die REST-API benötigt)
+          dh_token=$(curl -s -X POST "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\": \"${{ secrets.DOCKERHUB_USERNAME }}\", \"password\": \"${{ secrets.DOCKERHUB_TOKEN }}\"}" \
+            | jq -r '.token')
+
+          if [ -z "${dh_token}" ] || [ "${dh_token}" = "null" ]; then
+            echo "Konnte kein Docker Hub API Token beziehen, überspringe Cleanup."
+            exit 0
+          fi
+
+          # Alle auf Docker Hub vorhandenen nightly-YYYYMMDD Tags holen (paginiert)
+          existing_nightlies=()
+          url="https://hub.docker.com/v2/repositories/${DST_NAMESPACE}/tags/?page_size=100"
+          while [ -n "${url}" ] && [ "${url}" != "null" ]; do
+            page=$(curl -s -H "Authorization: Bearer ${dh_token}" "${url}")
+            while IFS= read -r t; do
+              existing_nightlies+=("${t}")
+            done < <(echo "${page}" | jq -r '.results[].name' | grep -E '^nightly-[0-9]{8}$' || true)
+            url=$(echo "${page}" | jq -r '.next')
+          done
+
+          # Tags, die im aktuellen Lauf behalten werden sollen (aus vorigem Step)
+          keep_nightlies=$(grep -E '^nightly-[0-9]{8}$' tags.txt || true)
+
+          echo "Vorhandene datierte Nightlies auf Docker Hub: ${#existing_nightlies[@]}"
+          echo "Davon zu behalten:"
+          echo "${keep_nightlies}"
+
+          for tag in "${existing_nightlies[@]}"; do
+            if ! echo "${keep_nightlies}" | grep -qx "${tag}"; then
+              echo "==> Lösche veralteten Tag: ${tag}"
+              curl -s -X DELETE \
+                -H "Authorization: Bearer ${dh_token}" \
+                "https://hub.docker.com/v2/repositories/${DST_NAMESPACE}/tags/${tag}/" \
+                -o /dev/null -w "    HTTP %{http_code}\n"
+            fi
+          done
