@@ -2,8 +2,8 @@ name: Mirror OBS images to Docker Hub
 
 on:
   schedule:
-    # Täglich um 05:15 UTC - kurz nach dem üblichen Nightly-Build-Zeitfenster
-    - cron: '15 5 * * *'
+    # Täglich um 03:00 UTC - 50 Min. nach Start des Nightly-Builds (cron '10 2 * * *')
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       extra_tag:
