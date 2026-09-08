@@ -1,10 +1,12 @@
 # OBS Docker Hub Mirror
 
-Spiegelt Docker-Images von [ghcr.io/abeggled/openbridgeserver](https://github.com/abeggled/openbridgeserver/pkgs/container/openbridgeserver) automatisch nach [Docker Hub](https://hub.docker.com/r/starwarsfan/openbridgeserver).
+Spiegelt Docker-Images von [ghcr.io/abeggled/openbridgeserver](https://github.com/abeggled/openbridgeserver/pkgs/container/openbridgeserver) 
+automatisch nach [Docker Hub](https://hub.docker.com/r/starwarsfan/openbridgeserver).
 
 ## Hintergrund
 
-Einige Nutzer haben Schwierigkeiten, Images von GHCR zu beziehen (z.B. wegen Authentifizierungs-Anforderungen oder Netzwerk-/Firewall-Restriktionen). Dieses Repo stellt dieselben Images zusätzlich auf Docker Hub bereit, ohne dass am OBS-Build-Prozess selbst etwas geändert werden muss.
+Einige Nutzer haben Schwierigkeiten, Images von GHCR zu beziehen (z.B. wegen Authentifizierungs-Anforderungen oder Netzwerk-/Firewall-Restriktionen).
+Dieses Repo stellt dieselben Images zusätzlich auf Docker Hub bereit, ohne dass am OBS-Build-Prozess selbst etwas geändert werden muss.
 
 ## Funktionsweise
 
@@ -19,7 +21,8 @@ Der Workflow [`mirror-to-dockerhub.yml`](.github/workflows/mirror-to-dockerhub.y
    - die letzten `NIGHTLY_RETENTION` datierten Nightly-Tags (Pattern `nightly-YYYYMMDD`)
 4. Kopiert die gefilterten Tags per `skopeo copy --all` (inkl. Multi-Arch-Manifest) 1:1 nach Docker Hub.
 
-Reine Commit-Hash-Tags (z.B. `c08404b`) sowie Hash-Nightlies (z.B. `nightly-79df238`) werden bewusst **nicht** gemirrort, da sie inhaltlich identisch zu einem bereits gemirrorten Versions- bzw. datierten Nightly-Tag sind.
+Reine Commit-Hash-Tags (z.B. `c08404b`) sowie Hash-Nightlies (z.B. `nightly-79df238`) werden bewusst **nicht** gemirrort, da sie inhaltlich identisch zu
+einem bereits gemirrorten Versions- bzw. datierten Nightly-Tag sind.
 
 Der Kopiervorgang ist idempotent: bereits vorhandene, unveränderte Tags werden beim nächsten Lauf einfach erneut überschrieben, ohne dass das ein Problem darstellt.
 
